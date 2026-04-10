@@ -6,10 +6,14 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Free.ai SSE Proxy is Running!"
+    return jsonify({
+        "status": "online",
+        "message": "Free.ai JSON Proxy is Running"
+    })
 
 @app.route('/ask', methods=['GET'])
 def ask_ai():
+    # ইউজার থেকে প্রশ্ন নেওয়া
     query = request.args.get('q', 'আপনি কি কি পারেন')
     
     url = "https://api.free.ai/v1/chat/"
@@ -28,7 +32,7 @@ def ask_ai():
             }
         ],
         "temperature": 0.2,
-        "stream": True, # স্ট্রিম অন রাখা হয়েছে
+        "stream": True,
         "max_tokens": 4096
     }
 
@@ -45,41 +49,55 @@ def ask_ai():
     }
 
     try:
-        # রিকোয়েস্ট পাঠানো (stream=True জরুরি)
+        # রিকোয়েস্ট পাঠানো
         response = requests.post(url, data=json.dumps(payload), headers=headers, stream=True, timeout=60)
         
-        full_response = ""
-        
-        # SSE ডাটা প্রসেস করা
+        full_content = ""
+        model_name = ""
+
+        # SSE স্ট্রিম প্রসেস করা
         for line in response.iter_lines():
             if line:
-                # লাইনটি ডিকোড করা (bytes to string)
                 decoded_line = line.decode('utf-8')
                 
-                # SSE লাইনের শুরুতে সাধারণত 'data: ' থাকে
                 if decoded_line.startswith('data: '):
-                    json_str = decoded_line[6:] # 'data: ' অংশটুকু বাদ দেওয়া
+                    content_str = decoded_line[6:].strip()
                     
-                    # যদি স্ট্রিম শেষ হয় [DONE] আসে
-                    if json_str.strip() == "[DONE]":
+                    if content_str == "[DONE]":
                         break
                     
                     try:
-                        data = json.loads(json_str)
-                        # content অংশটুকু খুঁজে বের করে জোড়া লাগানো
-                        if "choices" in data and len(data["choices"]) > 0:
-                            content = data["choices"][0].get("delta", {}).get("content", "")
-                            full_response += content
-                    except json.JSONDecodeError:
+                        chunk_data = json.loads(content_str)
+                        # মডেলের নাম সেভ করে রাখা (প্রথম চঙ্ক থেকে)
+                        if not model_name:
+                            model_name = chunk_data.get("model", "claude-sonnet-4")
+                        
+                        # কন্টেন্ট অংশটুকু সংগ্রহ করা
+                        if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                            delta = chunk_data["choices"][0].get("delta", {})
+                            if "content" in delta:
+                                full_content += delta["content"]
+                    except:
                         continue
 
-        # সম্পূর্ণ জোড়া লাগানো উত্তরটি পাঠানো
-        return full_response if full_response else "No response from AI."
+        # সুন্দর JSON ফরম্যাটে আউটপুট দেওয়া
+        return jsonify({
+            "status": "success",
+            "data": {
+                "query": query,
+                "response": full_content,
+                "model": model_name,
+                "provider": "Free.ai"
+            }
+        })
 
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
-# Vercel-এর জন্য
+# Vercel এর জন্য
 application = app
 
 if __name__ == "__main__":
