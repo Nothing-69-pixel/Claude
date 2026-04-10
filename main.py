@@ -1,81 +1,86 @@
-from flask import Flask, request, Response
+from flask import Flask, request, jsonify
 import requests
 import json
 
 app = Flask(__name__)
 
-# ইউনিকোড বা বাংলা ফন্ট ঠিকভাবে দেখানোর জন্য
-app.config['JSON_AS_ASCII'] = False
-
 @app.route('/')
 def home():
-    return "Free.ai SSE API Proxy is Running!"
+    return "Free.ai SSE Proxy is Running!"
 
 @app.route('/ask', methods=['GET'])
-def ask():
-    query = request.args.get('q')
-    if not query:
-        return Response(json.dumps({"error": "Please provide a query 'q'"}, ensure_ascii=False), content_type='application/json')
-
+def ask_ai():
+    query = request.args.get('q', 'আপনি কি কি পারেন')
+    
     url = "https://api.free.ai/v1/chat/"
 
+    # আপনার দেওয়া পেলোড
     payload = {
         "model": "anthropic/claude-sonnet-4",
         "messages": [
             {
-                "role": "system", 
-                "content": "You are a helpful AI assistant. Answer accurately and concisely."
+                "role": "system",
+                "content": "You are Free.ai Coder, an expert AI coding assistant."
             },
             {
-                "role": "user", 
+                "role": "user",
                 "content": query
             }
         ],
         "temperature": 0.2,
-        "stream": True,
-        "max_tokens": 10000000000
+        "stream": True, # স্ট্রিম অন রাখা হয়েছে
+        "max_tokens": 4096
     }
 
+    # আপনার দেওয়া হেডার
     headers = {
-        'User-Agent': "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0",
+        'User-Agent': "Mozilla/5.0 (Linux; Android 13; M2103K19I Build/TP1A.220624.014) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.166 Mobile Safari/537.36",
         'Content-Type': "application/json",
         'Origin': "https://free.ai",
-        'Accept': "text/event-stream"
+        'X-Requested-With': "mark.via.gp",
+        'Sec-Fetch-Site': "same-site",
+        'Sec-Fetch-Mode': "cors",
+        'Sec-Fetch-Dest': "empty",
+        'Accept-Language': "en-US,en;q=0.9"
     }
 
     try:
-        # stream=True ব্যবহার করা হয়েছে কারণ API-টি SSE ডাটা পাঠায়
-        response = requests.post(url, data=json.dumps(payload), headers=headers, stream=True, timeout=30)
+        # রিকোয়েস্ট পাঠানো (stream=True জরুরি)
+        response = requests.post(url, data=json.dumps(payload), headers=headers, stream=True, timeout=60)
         
-        full_text = ""
+        full_response = ""
         
-        # SSE ডাটা থেকে content খুঁজে বের করার লজিক
+        # SSE ডাটা প্রসেস করা
         for line in response.iter_lines():
             if line:
+                # লাইনটি ডিকোড করা (bytes to string)
                 decoded_line = line.decode('utf-8')
+                
+                # SSE লাইনের শুরুতে সাধারণত 'data: ' থাকে
                 if decoded_line.startswith('data: '):
-                    json_str = decoded_line[6:] # 'data: ' অংশটুকু ফেলে দেওয়া
+                    json_str = decoded_line[6:] # 'data: ' অংশটুকু বাদ দেওয়া
                     
+                    # যদি স্ট্রিম শেষ হয় [DONE] আসে
                     if json_str.strip() == "[DONE]":
                         break
                     
                     try:
                         data = json.loads(json_str)
-                        # JSON থেকে শুধু content টুকু নেওয়া
-                        if 'choices' in data and len(data['choices']) > 0:
-                            content = data['choices'][0].get('delta', {}).get('content', '')
-                            full_text += content
-                    except:
+                        # content অংশটুকু খুঁজে বের করে জোড়া লাগানো
+                        if "choices" in data and len(data["choices"]) > 0:
+                            content = data["choices"][0].get("delta", {}).get("content", "")
+                            full_response += content
+                    except json.JSONDecodeError:
                         continue
-        
-        # সম্পূর্ণ উত্তরটি JSON আকারে পাঠানো
-        final_json = json.dumps({"answer": full_text.strip()}, ensure_ascii=False)
-        return Response(final_json, content_type='application/json; charset=utf-8')
+
+        # সম্পূর্ণ জোড়া লাগানো উত্তরটি পাঠানো
+        return full_response if full_response else "No response from AI."
 
     except Exception as e:
-        error_json = json.dumps({"error": str(e)}, ensure_ascii=False)
-        return Response(error_json, content_type='application/json', status=500)
+        return f"Error: {str(e)}", 500
 
-# Vercel-এর জন্য মেইন এন্ট্রি পয়েন্ট
+# Vercel-এর জন্য
+application = app
+
 if __name__ == "__main__":
     app.run(debug=True)
